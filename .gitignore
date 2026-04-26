@@ -3,3 +3,13 @@ DiffMorpher/
 GeodesicDiffusion/
 NoiseDiffusion/
 RiemannEBM/
+CLAUDE.md
+
+.venv/
+data/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+wandb/
+runs/
