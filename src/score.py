@@ -22,7 +22,7 @@ class Score_Distillation():
         self.embed_uncond = pipe.prompt2embed('')
         self.embed_neg = pipe.prompt2embed('A doubling image, unrealistic, artifacts, distortions, unnatural blending, ghosting effects,\
             overlapping edges, harsh transitions, motion blur, poor resolution, low detail')
-    x
+
     # def reset_args(self, **kwargs):
     #     for key, value in kwargs.items():
     #         setattr(self, key, value)
