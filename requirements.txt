@@ -1,0 +1,16 @@
+# PyTorch wheels for CUDA 12.1 (forward-compatible with system CUDA 12.2 / driver 535).
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+torch==2.5.1
+torchvision==0.20.1
+
+diffusers==0.31.0
+transformers==4.46.3
+accelerate==1.1.1
+safetensors==0.4.5
+
+numpy==1.26.4
+pillow==10.4.0
+tqdm==4.66.5
+pyyaml==6.0.2
+einops==0.8.0
