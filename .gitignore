@@ -2,7 +2,6 @@ DiffMorpher/
 GeodesicDiffusion/
 NoiseDiffusion/
 RiemannEBM/
-CLAUDE.md
 
 .venv/
 data/
