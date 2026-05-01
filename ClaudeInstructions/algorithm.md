@@ -21,30 +21,29 @@ Now, we add a Gaussian annulus based correction term. The underlying assumption 
 So, to create this term, we take $1000$ images from the dataset, noise them to the $\tau=600$ level and calculate the the mean magnitude $\mu_{\epsilon}$ and the standard deviation of the magnitude $\sigma_{\epsilon}$ Then, we define a new loss $G_{\epsilon} = \left( \frac{||x|| - \mu_{\epsilon}}{\sigma_{\epsilon}} \right)^2.$
 
 
-Our metric is just going to be $G = G_{x_{t}} + G_{\epsilon}.$
-  
+Our metric is going to be $G = G_{x_{t}} + G_{\epsilon}$, with an optional weight $\lambda_m$ on the annulus term that we can tune at optimization time:
+$$g_{x}(v, v) = \|J_{x} v\|^2 + \lambda_m\, G_{\epsilon}(x)\, \|v\|^2.$$
 
-Now that we have a metric, we're going to parametrize the interpolation with a model, and learn it. This is the same approach described in the RiemannEBM repo. The original UNET model for the parametrization of the interpolation from with a model Metric Flow Matching https://arxiv.org/pdf/2405.14780 is designed for interpolations in the $64 \times 64 \times 4$ latent space of a VAE, so we'll replicate that approach here.
+Setting $\lambda_m = 0$ recovers the score-Jacobian-only metric (the Be Tangential ablation); $\lambda_m > 0$ is the full proposed metric.
 
+## Computing the geodesic interpolation
 
-The general approach is. Set interpolant of form $$
+Rather than amortizing across pairs with a learned interpolant network, we solve each pair independently via discrete path optimization in noise space. This bypasses the SGD-over-many-pairs loop entirely; full derivation and pseudocode are in [intermediate_optimization.md](intermediate_optimization.md).
 
-x_{t, \eta} = (1-t)x_{0} + tx_{1} + t(1-t)\varphi_{t,\eta}(x_{0}, x_{1}).$$
+Given endpoint images $x_0, x_1$:
 
-Our objective is to learn $\eta$ such that $x_{t, \eta}$ approximates the geodesic $\gamma_{t}^*$ where $\gamma_{t}^*$ is the path minimizing $$
+1. **Invert.** Map both endpoints into the $\tau$ noise space via deterministic DDIM inversion to get $z_0, z_N$ (frozen throughout optimization).
 
-\gamma_{t}^* = \arg\min_{\gamma_{t}: \gamma_{0} = x_{0}, \gamma_{1}=x_{1}} \mathcal{E}_{g}(\gamma_{t}), \text{ where }\mathcal{E}_{g}(\gamma_{t}) := \mathbb{E}[\dot{\gamma}_{t}^{\top}\mathbf{G}(\gamma_{t}; \mathcal{D})\dot{\gamma_{t}}].$$
+2. **Discretize.** Take a discrete path $z_0, z_1, \dots, z_N$ with $N$ segments (default $N=10$, giving $9$ interior points). Initialize the interior points via SLERP between $z_0$ and $z_N$.
 
-  
+3. **Discrete energy.** With $\Delta u = 1/N$, approximate the continuous energy $E[\gamma] = \tfrac{1}{2}\int_0^1 g(\gamma, \dot\gamma)\,du$ by
+$$\mathcal{L} = \frac{1}{2\Delta u} \sum_{i=0}^{N-1} \Big[\,\|s_\theta(z_{i+1}, \tau) - s_\theta(z_i, \tau)\|^2 \;+\; \lambda_m\, G_\epsilon(z_i)\, \|z_{i+1} - z_i\|^2\,\Big].$$
+The score-Jacobian term $\|J_x \dot\gamma\|^2$ is approximated as the squared *finite difference of scores at adjacent path points* (which equals $\|d s_\theta/du\|^2$ by the chain rule). This avoids JVP computation entirely — only standard score evaluations and their normal autograd graphs are needed.
 
-This gives us the following training loop.
+4. **Optimize.** Solve
+$$\min_{z_1, \dots, z_{N-1}} \mathcal{L}(z_1, \dots, z_{N-1})$$
+with Adam (lr $10^{-3}$, cosine decay to $10^{-4}$, $500$ iterations). Pairs are batched together for SD-UNet throughput.
 
-1. Sample $(x_{0}, x_{1}) \sim q$ and $t \sim \mathcal{U}(0,1)$
+5. **Decode.** DDIM-denoise each optimized $z_i^{\star}$ back to pixel space to get the interpolated images.
 
-2. $x_{t, \eta} = (1-t)x_{0} + tx_{1} + t(1-t)\varphi_{t,\eta}(x_{0}, x_{1})$
-
-3. $\dot{x}_{t, \eta} = x_{1} - x_{0} + t(1-t)\dot{\varphi}_{t,\eta}(x_{0}, x_{1}) + (1-2t)\varphi_{t,\eta}(x_{0}, x_{1})$
-
-4. $\ell(\eta) \leftarrow (\dot{x}_{t, \eta})^{\top} \mathbf{G}(x_{t,\eta}; \mathcal{D})\dot{x}_{t, \eta}$
-
-5. Update $\eta$ using $\nabla_{n}\ell(\eta)$
+The ablation $\lambda_m = 0$ vs $\lambda_m = 1$ directly measures the contribution of the Gaussian-annulus term within the same optimization framework — same code, same hyperparameters, same pair set, only the metric differs. See [intermediate_optimization_eval.md](intermediate_optimization_eval.md) for the CelebA-HQ-specific evaluation protocol.
