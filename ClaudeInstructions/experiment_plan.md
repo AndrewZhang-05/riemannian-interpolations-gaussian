@@ -40,11 +40,7 @@ NoiseDiffusion: Correcting Noise for Image Interpolation with Diffusion Models b
 - Training free, should be easy
 
 Be Tangential To Manifold:
-- Basically encompassed by what we need to do, should be easy
-
-Follow the energy, find the path
-- Also encompassed by what we need to do, should be easy
-
+- Realized as the $\lambda_m = 0$ ablation of our method (same per-pair optimization, same code, same hyperparameters — only the metric drops the $G_\epsilon$ term). See [algorithm.md](algorithm.md) and [intermediate_optimization.md](intermediate_optimization.md).
 
 **What datasets are we going to interpolate on?**
 
@@ -80,6 +76,7 @@ Full-scale (Do all the interpolation in the $4\times64\times64$ latent)
 
 CelebA-HQ $3 \times 512 \times 512$
 Stable Diffusion v2.1-base diffusion model
+- Evaluation protocol: see [intermediate_optimization_eval.md](intermediate_optimization_eval.md). 100 pairs (50 male + 50 female, LPIPS $<0.6$ between endpoints), $N-1=9$ interior frames per pair, metrics PPL / PDV / FID / RE.
 
 
 AFHQ $3 \times 512 \times 512$
@@ -87,3 +84,6 @@ Stable Diffusion v2.1-base diffusion model
 
 Compare against:
 All baselines
+
+
+**Method (across datasets).** Per-pair discrete path optimization in noise space, parameterized by the metric $G = G_{x_t} + \lambda_m\, G_\epsilon$. See [algorithm.md](algorithm.md) for the full procedure and [intermediate_optimization.md](intermediate_optimization.md) for implementation details. The Be-Tangential vs ours comparison is the $\lambda_m = 0$ vs $\lambda_m > 0$ ablation, run with [scripts/compare_annulus_ablation.py](../scripts/compare_annulus_ablation.py).
