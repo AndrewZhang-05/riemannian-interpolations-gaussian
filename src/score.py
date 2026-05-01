@@ -1,15 +1,18 @@
+import contextlib
+
 from src.diffusion_pipeline import *  # noqa: F401,F403  (re-exports torch, SimpleDiffusionPipeline)
 
 class Score_Distillation():
-    def __init__(self, 
+    def __init__(self,
             pipe: SimpleDiffusionPipeline,
-            time_step=0, 
-            grad_sample_range=50, 
-            grad_weight_type='uniform', 
-            grad_guidance_0= 1, 
-            grad_guidance_1= 1, 
-            grad_sample_type='ori_step', 
-            grad_batch_size=10):
+            time_step=0,
+            grad_sample_range=50,
+            grad_weight_type='uniform',
+            grad_guidance_0= 1,
+            grad_guidance_1= 1,
+            grad_sample_type='ori_step',
+            grad_batch_size=10,
+            use_autocast=True):
         self.pipe = pipe
         self.device = str(pipe.device)
         self.grad_sample_range = grad_sample_range
@@ -19,6 +22,10 @@ class Score_Distillation():
         self.grad_guidance_1 = grad_guidance_1
         self.grad_sample_type = grad_sample_type
         self.grad_batch_size = grad_batch_size
+        # When False, run the SD UNet in fp32 (no autocast). Required when using
+        # the FD backend, since fp16 quantization destroys the (s_plus - s_minus)
+        # signal at any reasonable eps.
+        self.use_autocast = use_autocast
         self.embed_uncond = pipe.prompt2embed('')
         self.embed_neg = pipe.prompt2embed('A doubling image, unrealistic, artifacts, distortions, unnatural blending, ghosting effects,\
             overlapping edges, harsh transitions, motion blur, poor resolution, low detail')
@@ -76,7 +83,9 @@ class Score_Distillation():
         embed_neg = self.embed_neg.repeat(b, 1, 1)
         latent, t = self.grad_prepare(latent)
         grad_c, grad_d = 0, 0
-        with torch.autocast(device_type=self.device, dtype=torch.float16):
+        ctx = (torch.autocast(device_type=self.device, dtype=torch.float16)
+               if self.use_autocast else contextlib.nullcontext())
+        with ctx:
             if self.grad_guidance_0 == self.grad_guidance_1: # just a trick to save some computation
                 grad_c = -self.pipe.noise_pred(latent, t, embed_cond)
                 grad_d = self.pipe.noise_pred(latent, t, embed_neg)

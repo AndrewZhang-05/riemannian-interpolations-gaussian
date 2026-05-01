@@ -49,6 +49,8 @@ class RiemannianMetric:
         jvp_backend: str = "jvp",
         fd_eps: float = 1e-3,
         chunk_size: Optional[int] = None,
+        use_annulus: bool = True,
+        fd_normalize: bool = False,
     ):
         if jvp_backend not in ("jvp", "fd"):
             raise ValueError(f"jvp_backend must be 'jvp' or 'fd', got {jvp_backend!r}")
@@ -63,6 +65,13 @@ class RiemannianMetric:
         self.jvp_backend = jvp_backend
         self.fd_eps = fd_eps
         self.chunk_size = chunk_size
+        # When False, drop G_eps and reduce the metric to G = G_{x_t} only —
+        # i.e., the Be-Tangential ablation. Score-Jacobian term is unchanged.
+        self.use_annulus = use_annulus
+        # When True, FD perturbs along v_hat = v/||v|| and rescales by ||v||.
+        # Output is mathematically the same J*v, but eps controls the
+        # perturbation magnitude in x-space directly, independent of ||v||.
+        self.fd_normalize = fd_normalize
 
     def _score_fn(self, x: torch.Tensor) -> torch.Tensor:
         embed = self.embed_cond.expand(x.shape[0], -1, -1)
@@ -74,6 +83,12 @@ class RiemannianMetric:
                 _, jv = torch.func.jvp(self._score_fn, (x,), (v,))
             return jv
         eps = self.fd_eps
+        if self.fd_normalize:
+            v_norms = v.flatten(1).norm(p=2, dim=1).view(-1, *[1] * (v.dim() - 1))
+            v_unit = v / v_norms.clamp_min(1e-12)
+            s_plus = self._score_fn(x + eps * v_unit)
+            s_minus = self._score_fn(x - eps * v_unit)
+            return (s_plus - s_minus) / (2 * eps) * v_norms
         s_plus = self._score_fn(x + eps * v)
         s_minus = self._score_fn(x - eps * v)
         return (s_plus - s_minus) / (2 * eps)
@@ -106,6 +121,8 @@ class RiemannianMetric:
 
         Jv = self.jvp(x, v)
         score_term = Jv.flatten(1).pow(2).sum(dim=1)
+        if not self.use_annulus:
+            return score_term.view(B, K)
         ann = self.annulus_factor(x)
         eucl = v.flatten(1).pow(2).sum(dim=1)
         return (score_term + ann * eucl).view(B, K)
