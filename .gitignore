@@ -1,9 +1,8 @@
-ClaudeInstructions/
 DiffMorpher/
 GeodesicDiffusion/
 NoiseDiffusion/
 RiemannEBM/
-CLAUDE.md
+scripts/benchmark_jvp_backend.py
 
 .venv/
 data/
