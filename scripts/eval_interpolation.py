@@ -32,17 +32,42 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.diffusion_pipeline import load_pipe
-from src.interpolators import INTERPOLATORS
+from src.interpolators import INTERPOLATORS, LearnedInterpolator
+from src.metric import AnnulusStats
+from src.path_optimizer import PathOptimizer, annulus_m
+from src.score import Score_Distillation
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--method", required=True, choices=sorted(INTERPOLATORS.keys()))
+    method_choices = sorted(INTERPOLATORS.keys()) + ["learned", "path_opt"]
+    ap.add_argument("--method", required=True, choices=method_choices,
+                    help="Method name. 'learned' loads --checkpoint; 'path_opt' runs per-pair "
+                         "geodesic optimization (no training).")
+    ap.add_argument("--checkpoint", type=Path, default=None,
+                    help="Path to a trained interpolant .model file (required when --method learned).")
+    ap.add_argument("--out-name", type=str, default=None,
+                    help="Subdir under --out-dir for outputs. Defaults to --method, or for "
+                         "--method learned, the parent dir name of --checkpoint.")
     ap.add_argument("--latent-cache", type=Path,
                     default=REPO_ROOT / "data/celeba_hq/train_celebahq_sd21_tau600.pt")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "runs/eval")
     ap.add_argument("--num-pairs", type=int, default=5000)
-    ap.add_argument("--num-frames", type=int, default=10)
+    ap.add_argument("--num-frames", type=int, default=11,
+                    help="Path points including endpoints. Default 11 = 9 interior + 2 endpoints, "
+                         "matching the CelebA-HQ paper protocol.")
+    # path_opt-only knobs
+    ap.add_argument("--annulus-stats", type=Path,
+                    default=REPO_ROOT / "data/celeba_hq/annulus_stats_sd21_tau600.pt",
+                    help="Annulus stats for path_opt's m_fn = G_ε.")
+    ap.add_argument("--path-iters", type=int, default=500,
+                    help="path_opt: Adam iterations per pair-batch.")
+    ap.add_argument("--path-lr", type=float, default=1e-3)
+    ap.add_argument("--path-lr-min", type=float, default=1e-4)
+    ap.add_argument("--lambda-m", type=float, default=1.0,
+                    help="path_opt: weight on the annulus term relative to the score-Jacobian term.")
+    ap.add_argument("--score-chunk-size", type=int, default=16,
+                    help="path_opt: chunk size for the SD UNet score evaluation.")
     ap.add_argument("--seed", type=int, default=42,
                     help="Eval-pair seed. Same across methods for direct comparison.")
     ap.add_argument("--device", default="cuda:0")
@@ -55,6 +80,11 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true",
                     help="Override num_pairs=8 and switch to data/celeba_hq/smoke.pt.")
     args = ap.parse_args()
+
+    if args.method == "learned" and args.checkpoint is None:
+        ap.error("--checkpoint is required when --method=learned")
+    if args.method != "learned" and args.checkpoint is not None:
+        print(f"[note] --checkpoint ignored for method={args.method}")
 
     if args.smoke:
         args.num_pairs = 8
@@ -87,10 +117,36 @@ def main() -> None:
     K_steps = math.ceil(args.tau / step_ratio) + 1
     noise_level = K_steps / pipe.scheduler.num_inference_steps
     print(f"[cfg] tau={args.tau} -> K_steps={K_steps}, noise_level={noise_level:.4f}")
-    print(f"[cfg] method={args.method}, num_pairs={args.num_pairs}, frames={args.num_frames}")
+    print(f"[cfg] num_pairs={args.num_pairs}, frames={args.num_frames}")
 
-    interp_fn = INTERPOLATORS[args.method]
-    method_dir = args.out_dir / args.method
+    if args.method == "learned":
+        interp_fn = LearnedInterpolator.from_checkpoint(args.checkpoint, args.device)
+        out_name = args.out_name or args.checkpoint.parent.name
+        print(f"[method] learned from {args.checkpoint} -> out_name={out_name}")
+    elif args.method == "path_opt":
+        score = Score_Distillation(
+            pipe, time_step=args.tau,
+            grad_guidance_0=1, grad_guidance_1=1,
+            grad_weight_type="uniform", grad_sample_type="ori_step",
+        )
+        annulus = AnnulusStats.load(args.annulus_stats)
+        m_fn = annulus_m(annulus)
+        interp_fn = PathOptimizer(
+            score_module=score, m_fn=m_fn, embed_cond=embed_empty,
+            num_iters=args.path_iters,
+            lr=args.path_lr, lr_min=args.path_lr_min,
+            lambda_m=args.lambda_m,
+            score_chunk_size=args.score_chunk_size,
+            progress=False,
+        )
+        out_name = args.out_name or "path_opt"
+        print(f"[method] path_opt: iters={args.path_iters} lr={args.path_lr}->{args.path_lr_min} "
+              f"lambda_m={args.lambda_m} score_chunk={args.score_chunk_size} "
+              f"μ_ε={annulus.mu:.3f} σ_ε={annulus.sigma:.3f}")
+    else:
+        interp_fn = INTERPOLATORS[args.method]
+        out_name = args.out_name or args.method
+    method_dir = args.out_dir / out_name
     method_dir.mkdir(parents=True, exist_ok=True)
     torch.save(
         {"idx0": idx0, "idx1": idx1, "seed": args.seed,
