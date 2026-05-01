@@ -2,6 +2,7 @@ DiffMorpher/
 GeodesicDiffusion/
 NoiseDiffusion/
 RiemannEBM/
+scripts/benchmark_jvp_backend.py
 
 .venv/
 data/
