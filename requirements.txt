@@ -16,3 +16,8 @@ pyyaml==6.0.2
 einops==0.8.0
 
 torchcfm==1.0.7
+
+# Eval-time metrics (PPL/PDV via LPIPS, FID via Inception-v3).
+torchmetrics==1.9.0
+torch-fidelity==0.3.0
+
